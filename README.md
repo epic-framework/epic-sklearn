@@ -1,5 +1,5 @@
 # Epic sklearn &mdash; An expansion pack for scikit-learn
-[![Epic-sklearn CI](https://github.com/Cybereason/epic-sklearn/actions/workflows/ci.yml/badge.svg)](https://github.com/Cybereason/epic-sklearn/actions/workflows/ci.yml)
+[![Epic-sklearn CI](https://github.com/epic-framework/epic-sklearn/actions/workflows/ci.yml/badge.svg)](https://github.com/epic-framework/epic-sklearn/actions/workflows/ci.yml)
 
 ## What is it?
 The **epic-sklearn** Python library is a companion to the scikit-learn library for machine learning.
