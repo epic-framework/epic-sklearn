@@ -86,7 +86,7 @@ quicklib.setup(
     ),
     author='Assaf Ben-David, Yonatan Perry, Uri Sternfeld',
     license='MIT License',
-    url='https://github.com/Cybereason/epic-sklearn',
+    url='https://github.com/epic-framework/epic-sklearn',
     python_requires=">=3.10",
     top_packages=['epic'],
     version_module_paths=['epic/sklearn'],

@@ -20,7 +20,7 @@ python -c "import sys, struct, ssl; print('#' * 70); print('python:', sys.versio
 git fetch --tags --force
 python -m pip install -U 'quicklib>=2.4'
 python setup.py sdist --formats=zip
-python -m pip install dist/*.zip --extra-index-url https://d2dsindf03djlb.cloudfront.net
+python -m pip install dist/*.zip
 
 #
 # run the tests
