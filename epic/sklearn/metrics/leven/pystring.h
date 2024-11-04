@@ -10,6 +10,14 @@
 namespace py = pybind11;
 
 
+enum PyStringKind {
+    PyString_BYTE_KIND,
+    PyString_UNICODE1_KIND,
+    PyString_UNICODE2_KIND,
+    PyString_UNICODE4_KIND
+};
+
+
 class PyStringWrap {
 public:
     explicit PyStringWrap(const py::handle &handle)
@@ -20,19 +28,29 @@ public:
             PyBytes_AsStringAndSize(_pyobj, &ptr, &size);
             _len = (size_t)size;
             _ptr.reset(ptr, &no_delete);
-            _kind = PyUnicode_WCHAR_KIND;
+            _kind = PyString_BYTE_KIND;
         }
         else if (py::isinstance<py::bytearray>(handle)) {
             _len = PyByteArray_GET_SIZE(_pyobj);
             _ptr.reset(PyByteArray_AS_STRING(_pyobj), &no_delete);
-            _kind = PyUnicode_WCHAR_KIND;
+            _kind = PyString_BYTE_KIND;
         }
         else if (py::isinstance<py::str>(handle)) {
-            if (PyUnicode_READY(_pyobj))
-                throw std::bad_alloc();
             _len = (size_t)PyUnicode_GET_LENGTH(_pyobj);
             _ptr.reset(PyUnicode_DATA(_pyobj), &no_delete);
-            _kind = (PyUnicode_Kind)PyUnicode_KIND(_pyobj);
+            switch (PyUnicode_KIND(_pyobj)) {
+                case PyUnicode_1BYTE_KIND:
+                    _kind = PyString_UNICODE1_KIND;
+                    break;
+                case PyUnicode_2BYTE_KIND:
+                    _kind = PyString_UNICODE2_KIND;
+                    break;
+                case PyUnicode_4BYTE_KIND:
+                    _kind = PyString_UNICODE4_KIND;
+                    break;
+                default:
+                    throw std::runtime_error("unexpected unicode kind");
+            }
         }
         else
             throw py::value_error("can only initialize PyStringWrap objects from bytes, bytearray or str objects.");
@@ -80,16 +98,16 @@ public:
 
     void toUnicode4() {
         switch (_kind) {
-            case PyUnicode_WCHAR_KIND:
+            case PyString_BYTE_KIND:
                 throw std::runtime_error("cannot convert bytes/bytearray to unicode");
-            case PyUnicode_4BYTE_KIND:
+            case PyString_UNICODE4_KIND:
                 break;
-            case PyUnicode_1BYTE_KIND:
-            case PyUnicode_2BYTE_KIND:
+            case PyString_UNICODE1_KIND:
+            case PyString_UNICODE2_KIND:
                 _ptr.reset(PyUnicode_AsUCS4Copy(_pyobj), [](void *p) { PyMem_Free(p); });
                 if (!_ptr)
                     throw std::bad_alloc();
-                _kind = PyUnicode_4BYTE_KIND;
+                _kind = PyString_UNICODE4_KIND;
                 break;
             default:
                 throw std::runtime_error("unexpected unicode kind");
@@ -104,7 +122,7 @@ private:
     PyObject *_pyobj;
     size_t _len;
     std::shared_ptr<const void> _ptr;
-    PyUnicode_Kind _kind;
+    PyStringKind _kind;
 
     void inc_ref() const {
         Py_INCREF(_pyobj);

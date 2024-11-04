@@ -137,16 +137,16 @@ private:
         auto pa = a.ptr(), pb = b.ptr();
         auto la = a.len(), lb = b.len();
         switch (a.kind()) {
-            case PyUnicode_WCHAR_KIND:
+            case PyString_BYTE_KIND:
                 levendist(reinterpret_cast<const char *>(pa), la, reinterpret_cast<const char *>(pb), lb, d);
                 break;
-            case PyUnicode_1BYTE_KIND:
+            case PyString_UNICODE1_KIND:
                 levendist(reinterpret_cast<const Py_UCS1 *>(pa), la, reinterpret_cast<const Py_UCS1 *>(pb), lb, d);
                 break;
-            case PyUnicode_2BYTE_KIND:
+            case PyString_UNICODE2_KIND:
                 levendist(reinterpret_cast<const Py_UCS2 *>(pa), la, reinterpret_cast<const Py_UCS2 *>(pb), lb, d);
                 break;
-            case PyUnicode_4BYTE_KIND:
+            case PyString_UNICODE4_KIND:
                 levendist(reinterpret_cast<const Py_UCS4 *>(pa), la, reinterpret_cast<const Py_UCS4 *>(pb), lb, d);
                 break;
             default:
@@ -158,7 +158,7 @@ private:
     auto readStrings(std::initializer_list<py::iterable> iterables) const {
         std::vector<std::vector<PyStringWrap>> strings(iterables.size());
         bool convert_kind = false;
-        std::optional<PyUnicode_Kind> seen_kind;
+        std::optional<PyStringKind> seen_kind;
         std::transform(iterables.begin(), iterables.end(), strings.begin(), [&](const py::iterable &iterable) {
             std::vector<PyStringWrap> strvec;
             for (auto it = py::iter(iterable); it != py::iterator::sentinel(); ++it) {
@@ -168,7 +168,7 @@ private:
                     seen_kind = kind;
                 else if (seen_kind.value() != kind) {
                     convert_kind = true;
-                    if (seen_kind.value() == PyUnicode_WCHAR_KIND || kind == PyUnicode_WCHAR_KIND)
+                    if (seen_kind.value() == PyString_BYTE_KIND || kind == PyString_BYTE_KIND)
                         throw py::value_error("cannot mix bytes/bytearray objects and unicode strings");
                 }
             }
