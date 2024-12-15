@@ -96,7 +96,6 @@ quicklib.setup(
     setup_requires=[
         'numpy>=1.21.5',
         'pybind11>=2.7.0',
-        'leven @ git+https://github.com/bd-assaf/leven',
     ],
     install_requires=[
         'numpy>=1.21.5',
