@@ -35,7 +35,6 @@ leven_ext = Extension(
     sources=[f'{leven_root}/leven.cpp'],
     include_dirs=[
         leven_root,
-        PostponedIncludeGetter('leven'),
         PostponedIncludeGetter('numpy'),
         PostponedIncludeGetter('pybind11'),
     ],
