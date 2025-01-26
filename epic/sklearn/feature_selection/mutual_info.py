@@ -331,6 +331,15 @@ def _get_column(data: NDArray | sp.spmatrix, col: int) -> NDArray:
     return data[:, col]
 
 
+# https://pandas.pydata.org/docs/whatsnew/v2.1.0.html#new-implementation-of-dataframe-stack
+def _stack_keep_nans(df: pd.DataFrame) -> pd.Series:
+    try:
+        return df.stack(future_stack=True)
+    except TypeError:
+        # Older versions of pandas
+        return df.stack(dropna=False)
+
+
 def _preprocess_data(
         X: ArrayLike | sp.spmatrix | pd.DataFrame,
         y: ArrayLike | pd.Series,
@@ -578,7 +587,7 @@ def conditional_mutual_info(
             cmi_matrix = check_array(cmi_matrix, force_all_finite=False)
         cmi_matrix = pd.DataFrame(cmi_matrix, index=feature_names, columns=feature_names)
 
-    stacked = cmi_matrix.stack(dropna=False)
+    stacked = _stack_keep_nans(cmi_matrix)
     to_calc = stacked.index[stacked.isnull()]
     pairs = np.column_stack((
         cmi_matrix.index.get_indexer(to_calc.get_level_values(0)),
@@ -830,7 +839,7 @@ def iterative_max_min_cmi(
             log.debug(f"appending feature: {features[0]}")
 
             while len(features) < n_features:
-                pairs = cmi_matrix.drop(features).loc[:, features].stack(dropna=False)
+                pairs = _stack_keep_nans(cmi_matrix.drop(features).loc[:, features])
                 pairs = pairs.index[pairs.isnull()]
                 pairs = np.column_stack((
                     cmi_matrix.index.get_indexer(pairs.get_level_values(0)),
