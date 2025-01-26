@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "epic-sklearn"
+version = "1.1.0"
+description = "An expansion pack for scikit-learn"
+authors = ["Assaf Ben-David", "Yonatan Perry", "Uri Sternfeld"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/epic-framework/epic-sklearn"
+packages = [{include = "epic"}]
+include = [
+    { path = "epic/sklearn/**/*.h", format = "sdist" },
+    { path = "epic/sklearn/**/*.cpp", format = "sdist" },
+    { path = "epic/sklearn/**/*.so", format = "wheel" },
+    { path = "epic/sklearn/**/*.pyd", format = "wheel" },
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = ">=1.21.5"
+pandas = ">=1.4.4"
+scipy = ">=1.7.3"
+scikit-learn = ">=1.1.1"
+cytoolz = "*"
+matplotlib = "*"
+joblib = "*"
+ultima = "*"
+epic-logging = "*"
+epic-common = "*"
+epic-pandas = "*"
+
+[tool.poetry.group.test.dependencies]
+pytest = "*"
+pytest-cov = "*"
+
+[tool.poetry.group.build.dependencies]
+setuptools = "*"
+pybind11 = ">=2.7.0"
+
+[tool.poetry.build]
+script = "build.py"
+
+[build-system]
+requires = [
+    "poetry-core",
+    "setuptools",
+    "pybind11>=2.7.0",
+]
+build-backend = "poetry.core.masonry.api"

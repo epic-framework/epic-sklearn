@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.so
 .idea
 *.iml
 *.swp
@@ -9,4 +10,5 @@ dist
 .eggs
 .pytest_cache
 .coverage*
+!.coveragerc
 htmlcov

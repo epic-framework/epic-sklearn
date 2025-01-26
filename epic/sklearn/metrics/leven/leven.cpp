@@ -27,7 +27,10 @@ public:
     static const char * const name;
     static const std::string dtype;
 
-    explicit Levenshtein(size_t n_threads) : n_threads(n_threads) {}
+    explicit Levenshtein(size_t n_threads)
+    : n_threads(n_threads),
+      csr_matrix(py::module_::import("scipy.sparse").attr("csr_matrix"))
+    {}
 
     auto distance(const py::object &str1, const py::object &str2) const {
         return pairwise(py::make_tuple(str1), py::make_tuple(str2)).at(0, 0);
@@ -128,8 +131,8 @@ public:
     }
 
 private:
-    static const py::object csr_matrix;
     const size_t n_threads;
+    const py::object csr_matrix;
 
     // The two strings are assumed to be of the same kind
     auto dist(const PyStringWrap &a, const PyStringWrap &b) const {
@@ -224,9 +227,6 @@ const std::string Levenshtein<unsigned>::dtype("int");
 
 template <>
 const std::string Levenshtein<double>::dtype("float");
-
-template <typename dist_t>
-const py::object Levenshtein<dist_t>::csr_matrix = py::module_::import("scipy.sparse").attr("csr_matrix");
 
 
 template <typename dist_t>
