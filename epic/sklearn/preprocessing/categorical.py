@@ -46,7 +46,7 @@ class FrequencyTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin
         self.map_ = {}
         for name, feature in X.items():
             hist, single_freq = self._histogram(feature)
-            hist[np.NaN] = hist[hist.index[hist.cumsum() >= 0.5][0]] if len(hist) > 1 else 0.5
+            hist[np.nan] = hist[hist.index[hist.cumsum() >= 0.5][0]] if len(hist) > 1 else 0.5
             self.map_[name] = (hist, single_freq)
         return self
 
@@ -54,7 +54,7 @@ class FrequencyTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin
         hist, new_val = self.map_[feature.name]
         ft = feature.map(hist).fillna(new_val)
         if not self.impute:
-            ft[feature.isnull()] = np.NaN
+            ft[feature.isnull()] = np.nan
         return ft
 
     def transform(self, X):
@@ -94,7 +94,7 @@ class FrequencyListTransformer(FrequencyTransformer):
     def _histogram(series: pd.Series) -> tuple[pd.Series, float]:
         cnt = Counter()
         series.map(cnt.update, na_action='ignore')
-        cnt.pop(np.NaN, None)
+        cnt.pop(np.nan, None)
         hist = pd.Series(cnt).sort_values(ascending=False)
         n_values = hist.sum()
         return hist / n_values, 1 / n_values
@@ -104,7 +104,7 @@ class FrequencyListTransformer(FrequencyTransformer):
             values = pd.Series(values)
         vt = values.map(hist).fillna(new_val)
         if not self.impute:
-            vt[values.isnull()] = np.NaN
+            vt[values.isnull()] = np.nan
         return vt.tolist()
 
     def _transform_feature(self, feature: pd.Series) -> pd.Series:
@@ -182,7 +182,7 @@ class CategoryEncoder(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
         if known.all():
             data = encoder.transform(feature)
         else:
-            data = np.full(len(feature), fill_value=np.NaN)
+            data = np.full(len(feature), fill_value=np.nan)
             data[known] = encoder.transform(feature[known])
         return pd.Series(data, index=feature.index, name=feature.name)
 

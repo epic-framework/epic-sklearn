@@ -12,7 +12,7 @@ from sklearn.metrics import mutual_info_score
 from sklearn.preprocessing import scale, LabelEncoder
 from sklearn.feature_selection._mutual_info import _compute_mi
 from sklearn.utils.multiclass import check_classification_targets
-from sklearn.utils import check_random_state, check_X_y, check_array, tosequence
+from sklearn.utils import check_random_state, check_X_y, check_array
 
 from ultima import Workforce
 from epic.logging import get_logger
@@ -393,7 +393,7 @@ def _preprocess_data(
     log.debug("preprocessing features")
 
     if is_iterable(discrete_features):
-        discrete_features = np.asarray(tosequence(discrete_features))
+        discrete_features = np.asarray(discrete_features)
 
     elif isinstance(discrete_features, str) and discrete_features == 'auto':
         discrete_features = sp.issparse(X)
@@ -573,7 +573,7 @@ def conditional_mutual_info(
         cmi_matrix = cmi_matrix.reindex(index=feature_names, columns=feature_names)
     else:
         if cmi_matrix is None:
-            cmi_matrix = np.full((n_features, n_features), np.NaN)
+            cmi_matrix = np.full((n_features, n_features), np.nan)
         else:
             cmi_matrix = check_array(cmi_matrix, force_all_finite=False)
         cmi_matrix = pd.DataFrame(cmi_matrix, index=feature_names, columns=feature_names)
@@ -816,7 +816,7 @@ def iterative_max_min_cmi(
         )
 
         n_features = X.shape[1]
-        cmi_matrix = pd.DataFrame(np.full((n_features, n_features), np.NaN), index=feature_names, columns=feature_names)
+        cmi_matrix = pd.DataFrame(np.full((n_features, n_features), np.nan), index=feature_names, columns=feature_names)
 
         with Workforce(n_workers=n_workers) as workforce:
             mi = list(workforce.map(

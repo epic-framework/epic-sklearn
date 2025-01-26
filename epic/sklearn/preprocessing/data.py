@@ -6,11 +6,10 @@ from typing import overload
 from numpy.typing import ArrayLike, NDArray
 from collections.abc import Mapping, Hashable, Iterable
 
-from sklearn.utils import tosequence
 from sklearn.utils.validation import check_is_fitted, check_array
 from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
-from epic.common.general import is_iterable, coalesce
+from epic.common.general import is_iterable, coalesce, to_list
 
 from ..utils import check_dataframe
 
@@ -67,7 +66,7 @@ class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
         self.bins_ = {}
         for ind, bins in coalesce(self.bins, {}).items():
             if is_iterable(bins):
-                self.bins_[ind] = tosequence(bins)
+                self.bins_[ind] = to_list(bins)
             else:
                 log = False
                 if isinstance(bins, str) and bins.endswith('log'):
@@ -104,7 +103,7 @@ class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
             colt = np.digitize(col, bins)
             if (is_na := col.isnull()).any():
                 colt = colt.astype(float)
-                colt[is_na] = np.NaN
+                colt[is_na] = np.nan
             self._indexer(Xt, ind)[:, ind] = colt
         return Xt
 
@@ -197,7 +196,7 @@ class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
             return cls._yeo_johnson(lambda_, data)
         best_lambda = optimize.brent(cls._neg_yeo_johnson_loglikelihood, brack=(0, 2), args=(data,))
         if is_iterable(best_lambda):
-            best_lambda = best_lambda[0]
+            best_lambda = next(iter(best_lambda))
         return cls._yeo_johnson(best_lambda, data), best_lambda
 
     @staticmethod

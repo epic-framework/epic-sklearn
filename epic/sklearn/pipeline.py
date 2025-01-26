@@ -6,7 +6,6 @@ from collections import defaultdict
 from joblib import Parallel, delayed
 from collections.abc import Callable, Iterable
 
-from sklearn.utils import tosequence
 from sklearn.base import TransformerMixin
 from sklearn.utils.metaestimators import _BaseComposition
 
@@ -52,7 +51,7 @@ class SampleSplitter(_BaseComposition, TransformerMixin):
     ):
         super().__init__()
         self.split_func = split_func
-        self.estimator_list = tosequence(estimators)
+        self.estimator_list = list(estimators)
         self.n_jobs = n_jobs
         self.split_func_kwargs = split_func_kwargs
         self._validate_estimators()
