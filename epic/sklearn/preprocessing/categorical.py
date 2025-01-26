@@ -13,7 +13,7 @@ from collections.abc import Iterable
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.validation import check_is_fitted
-from sklearn.base import BaseEstimator, TransformerMixin, _OneToOneFeatureMixin
+from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
 from epic.common.general import is_iterable, to_list, to_iterable
 
@@ -21,7 +21,7 @@ from ..utils import check_dataframe
 from .label import MultiLabelEncoder
 
 
-class FrequencyTransformer(BaseEstimator, TransformerMixin, _OneToOneFeatureMixin):
+class FrequencyTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
     """
     A transformer which replaces each value with its occurrence frequency within the feature.
     Values encountered in the transform stage but not in the fit stage are assumed to appear only once.
@@ -162,7 +162,7 @@ class ListStatisticsTransformer(BaseEstimator, TransformerMixin):
         return {"allow_nan": True}
 
 
-class CategoryEncoder(BaseEstimator, TransformerMixin, _OneToOneFeatureMixin):
+class CategoryEncoder(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
     """
     A transformer which encodes categorical features into integers.
 

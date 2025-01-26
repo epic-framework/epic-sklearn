@@ -10,7 +10,7 @@ from collections.abc import Hashable, Iterable, Callable, Mapping
 
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
-from sklearn.base import BaseEstimator, TransformerMixin, _OneToOneFeatureMixin
+from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
 from ultima import Workforce
 from ultima.backend import BackendArgument
@@ -24,7 +24,7 @@ from ..general import Estimator
 from ..utils import check_dataframe
 
 
-class SimpleTransformer(BaseEstimator, TransformerMixin, _OneToOneFeatureMixin):
+class SimpleTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
     """
     A base class for simple transformers.
 

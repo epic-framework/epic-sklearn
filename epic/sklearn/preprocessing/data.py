@@ -8,14 +8,14 @@ from collections.abc import Mapping, Hashable, Iterable
 
 from sklearn.utils import tosequence
 from sklearn.utils.validation import check_is_fitted, check_array
-from sklearn.base import BaseEstimator, TransformerMixin, _OneToOneFeatureMixin
+from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
 from epic.common.general import is_iterable, coalesce
 
 from ..utils import check_dataframe
 
 
-class BinningTransformer(BaseEstimator, TransformerMixin, _OneToOneFeatureMixin):
+class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
     """
     Discretize numerical values into bins.
 
@@ -112,7 +112,7 @@ class BinningTransformer(BaseEstimator, TransformerMixin, _OneToOneFeatureMixin)
         return {"allow_nan": True}
 
 
-class YeoJohnsonTransformer(BaseEstimator, _OneToOneFeatureMixin):
+class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
     """
     Apply the Yeo-Johnson transform,[1]_ which changes the distribution of the data to be
     more like a normal distribution.
@@ -253,7 +253,7 @@ class YeoJohnsonTransformer(BaseEstimator, _OneToOneFeatureMixin):
 yeo_johnson_transform = YeoJohnsonTransformer.yeo_johnson_transform
 
 
-class TailChopper(BaseEstimator, TransformerMixin, _OneToOneFeatureMixin):
+class TailChopper(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
     """
     Replace outlier values, i.e. values that are too far from the mean, with
     boundary values.
