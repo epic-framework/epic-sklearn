@@ -3,10 +3,8 @@ import numpy as np
 from typing import Literal
 from numpy.typing import ArrayLike, NDArray
 
-from sklearn.base import BaseEstimator
 
-
-class ThresholdedWeight(BaseEstimator):
+class ThresholdedWeight:
     """
     A collection of distance weighing schemes, allowing for a threshold to be applied.
     Wherever the distance is above the threshold, the weight will be zero.
@@ -17,22 +15,25 @@ class ThresholdedWeight(BaseEstimator):
     ----------
     scheme : {'uniform', 'reciprocal'}, default 'uniform'
         The weighing scheme to use.
-        - uniform: All weights are set to 1.
-        - reciprocal: Weights are set to 1 / distance.
+        - "uniform": All weights are set to 1.
+        - "reciprocal": Weights are set to 1 / distance.
 
     threshold : float, optional
         The distance above which the weights are set to zero.
         If not provided, no threshold is applied.
     """
-    def __init__(self, scheme: Literal['uniform', 'reciprocal'] = 'uniform', threshold: float | None = None):
+    def __init__(
+            self,
+            scheme: Literal['uniform', 'reciprocal'] = 'uniform',
+            threshold: float | None = None,
+    ):
+        if scheme not in ('uniform', 'reciprocal'):
+            raise ValueError(f"Invalid value for `scheme`: {scheme!r}.")
         self.scheme = scheme
         self.threshold = threshold
 
     def __call__(self, dist: ArrayLike) -> NDArray:
-        scheme = getattr(self, f'{self.scheme}_weight', None)
-        if scheme is None:
-            raise ValueError(f"Invalid value for `scheme`: '{self.scheme}'.")
-        weight = scheme(dist)
+        weight = getattr(self, f'{self.scheme}_weight')(dist)
         if self.threshold is not None:
             weight[dist > self.threshold] = 0.
         return weight

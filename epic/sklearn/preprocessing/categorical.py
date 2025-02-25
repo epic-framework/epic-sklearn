@@ -9,7 +9,7 @@ from scipy import sparse as sp
 from operator import itemgetter
 from collections import Counter
 from numpy.typing import DTypeLike
-from collections.abc import Iterable
+from collections.abc import Collection
 
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.validation import check_is_fitted
@@ -17,11 +17,11 @@ from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
 from epic.common.general import is_iterable, to_list, to_iterable
 
-from ..utils import check_dataframe
+from ..utils import check_pandas, validate_pandas
 from .label import MultiLabelEncoder
 
 
-class FrequencyTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
+class FrequencyTransformer(TransformerMixin, OneToOneFeatureMixin, BaseEstimator):
     """
     A transformer which replaces each value with its occurrence frequency within the feature.
     Values encountered in the transform stage but not in the fit stage are assumed to appear only once.
@@ -40,9 +40,7 @@ class FrequencyTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin
         return series.value_counts(normalize=True), 1 / len(series)
 
     def fit(self, X, y=None):
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
-        X, _ = check_dataframe(X)
+        X = validate_pandas(self, X, reset=True, ensure_df=True, force_all_finite='allow-nan')[0]
         self.map_ = {}
         for name, feature in X.items():
             hist, single_freq = self._histogram(feature)
@@ -59,17 +57,25 @@ class FrequencyTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
     def transform(self, X):
         check_is_fitted(self, 'map_')
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
-        Xt = check_dataframe(X)[0].apply(self._transform_feature).reindex(columns=list(self.map_))
+        # The `apply` would fail if there are unexpected features, and that's intended.
+        Xt = (
+            validate_pandas(self, X, reset=False, ensure_df=True, force_all_finite='allow-nan')[0]
+            .apply(self._transform_feature)
+            .reindex(columns=list(self.map_))
+        )
         if isinstance(X, pd.DataFrame):
             return Xt
         if isinstance(X, pd.Series):
             return Xt.iloc[:, 0]
-        return Xt.values
+        return Xt.to_numpy()
 
     def _more_tags(self):
         return {"allow_nan": True}
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.allow_nan = True
+        return tags
 
 
 class FrequencyListTransformer(FrequencyTransformer):
@@ -111,12 +117,26 @@ class FrequencyListTransformer(FrequencyTransformer):
         hist, new_val = self.map_[feature.name]
         return feature.map(partial(self._transform_values, hist=hist, new_val=new_val), na_action='ignore')
 
+    def _more_tags(self):
+        return dict(
+            preserves_dtype=[],
+            allow_nan=True,
+            X_types=[],
+        )
 
-class ListStatisticsTransformer(BaseEstimator, TransformerMixin):
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.transformer_tags.preserves_dtype = []
+        tags.input_tags.allow_nan = True
+        tags.input_tags.two_d_array = False
+        return tags
+
+
+class ListStatisticsTransformer(TransformerMixin, BaseEstimator):
     """
     Calculate statistics on lists of values.
 
-    Each sample of each feature is expected to be a list of values.
+    Each feature of each sample is expected to be a list of values.
     Upon transformation, on each such list, four statistics are computed: mean, std, max and min.
 
     Parameters
@@ -132,26 +152,28 @@ class ListStatisticsTransformer(BaseEstimator, TransformerMixin):
         self.keep_series_name = keep_series_name
 
     def fit(self, X, y=None):
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
+        validate_pandas(self, X, reset=True, ensure_df=True)
         return self
 
     def transform(self, X):
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
-        Xdf, _ = check_dataframe(X)
+        Xdf = validate_pandas(self, X, reset=False, ensure_df=True)[0]
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', RuntimeWarning)
-            Xt = pd.concat({feature_name: feature.apply(
-                lambda x: pd.Series({f: getattr(np, f'nan{f}')(np.r_[x, np.nan]) for f in self.FUNCS}).fillna(0)
-            ) for feature_name, feature in Xdf.items()}, axis=1)
+            Xt = pd.concat({
+                name: feature.apply(
+                    lambda x: pd.Series({
+                        f: getattr(np, f'nan{f}')(np.r_[x, np.nan])
+                        for f in self.FUNCS
+                    }).fillna(0)
+                ) for name, feature in Xdf.items()
+            }, axis=1)
         if isinstance(X, pd.Series) and not self.keep_series_name:
             Xt.columns = Xt.columns.droplevel(0)
             return Xt
         if isinstance(X, pd.Series | pd.DataFrame):
             Xt.columns = Xt.columns.map('_'.join)
             return Xt
-        return Xt.values
+        return Xt.to_numpy()
 
     def get_feature_names_out(self, input_features=None):
         if not hasattr(self, 'feature_names_in_'):
@@ -159,20 +181,43 @@ class ListStatisticsTransformer(BaseEstimator, TransformerMixin):
         return np.array([f'{f}_{x}' for f in self.feature_names_in_ for x in self.FUNCS])
 
     def _more_tags(self):
-        return {"allow_nan": True}
+        return dict(
+            preserves_dtype=[],
+            allow_nan=True,
+            X_types=[],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.transformer_tags.preserves_dtype = []
+        tags.input_tags.allow_nan = True
+        tags.input_tags.two_d_array = False
+        return tags
 
 
-class CategoryEncoder(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
+class CategoryEncoder(TransformerMixin, OneToOneFeatureMixin, BaseEstimator):
     """
     A transformer which encodes categorical features into integers.
 
     NaNs are left as is, and values encountered in `transform` but not in `fit` are
     transformed into NaN.
+
+    .. deprecated:: 1.1.2
+        Use `sklearn.preprocessing.OrdinalEncoder` instead.
     """
+    def __init__(self):
+        super().__init__()
+        warnings.warn(
+            "`CategoryEncoder` is deprecated and will be removed in a future version. "
+            "Use `sklearn.preprocessing.OrdinalEncoder` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     def fit(self, X, y=None):
         self._check_feature_names(X, reset=True)
         self._check_n_features(X, reset=True)
-        X, _ = check_dataframe(X)
+        X, _ = check_pandas(X)
         self.encoders_ = {n: LabelEncoder().fit(f.dropna()) for n, f in X.items()}
         return self
 
@@ -190,7 +235,7 @@ class CategoryEncoder(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
         check_is_fitted(self, 'encoders_')
         self._check_feature_names(X, reset=False)
         self._check_n_features(X, reset=False)
-        X, is_df = check_dataframe(X)
+        X, is_df = check_pandas(X)
         Xt = X.apply(self._transform_feature)
         return Xt if is_df else Xt.values
 
@@ -198,7 +243,7 @@ class CategoryEncoder(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
         return {"allow_nan": True}
 
 
-class ManyHotEncoder(BaseEstimator):
+class ManyHotEncoder(TransformerMixin, BaseEstimator):
     """
     A transformer which is similar to `sklearn.preprocessing.OneHotEncoder` but meant for
     features which are lists of values.
@@ -210,11 +255,11 @@ class ManyHotEncoder(BaseEstimator):
 
     Parameters
     ----------
-    categorical_features : 'all', iterable of ints or iterable of strings, default 'all'
+    categorical_features : 'all', collection of ints or collection of strings, default 'all'
         Which of the features are categorical.
         - 'all': All of them.
-        - Iterable of ints: Column indices.
-        - Iterable of strings: Column names.
+        - Collection of ints: Column indices.
+        - Collection of strings: Column names.
 
     dtype : dtype-like, default float
         Data type of the resulting transformed matrix.
@@ -245,7 +290,7 @@ class ManyHotEncoder(BaseEstimator):
     """
     def __init__(
             self,
-            categorical_features: Literal['all'] | Iterable[int] | Iterable[str] = "all",
+            categorical_features: Literal['all'] | Collection[int] | Collection[str] = "all",
             *,
             dtype: DTypeLike = np.float64,
             sparse: bool = True,
@@ -265,14 +310,15 @@ class ManyHotEncoder(BaseEstimator):
         return self
 
     def fit_transform(self, X, y=None):
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
-        X, _ = check_dataframe(X)
+        X = validate_pandas(self, X, reset=True, ensure_df=True)[0]
         if self.categorical_features == 'all':
             self.cat_ = X.columns.tolist()
-        elif not is_iterable(self.categorical_features):
+        elif not (
+                is_iterable(self.categorical_features) and
+                isinstance(self.categorical_features, Collection)
+        ):
             raise ValueError(
-                "`categorical_features` must either be an iterable, or 'all'; "
+                "`categorical_features` must either be a collection, or 'all'; "
                 f"was given {self.categorical_features}."
             )
         elif all(isinstance(x, int) for x in self.categorical_features):
@@ -305,9 +351,7 @@ class ManyHotEncoder(BaseEstimator):
 
     def transform(self, X):
         self._check_is_fitted()
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
-        X, _ = check_dataframe(X)
+        X = validate_pandas(self, X, reset=False, ensure_df=True)[0]
         return self._hstack(self._transform(X[self.cat_]), X[self.noncat_])
 
     def _fit_transform(self, X: pd.DataFrame) -> np.ndarray | sp.spmatrix:
@@ -389,3 +433,15 @@ class ManyHotEncoder(BaseEstimator):
 
     def get_feature_names_out(self, input_features=None):
         return self.get_feature_names()
+
+    def _more_tags(self):
+        return dict(
+            preserves_dtype=[],
+            X_types=[],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.transformer_tags.preserves_dtype = []
+        tags.input_tags.two_d_array = False
+        return tags

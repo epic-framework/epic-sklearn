@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import pandas as pd
 
@@ -6,15 +7,15 @@ from typing import overload
 from numpy.typing import ArrayLike, NDArray
 from collections.abc import Mapping, Hashable, Iterable
 
-from sklearn.utils.validation import check_is_fitted, check_array
+from sklearn.utils.validation import check_is_fitted
 from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
 from epic.common.general import is_iterable, coalesce, to_list
 
-from ..utils import check_dataframe
+from ..utils import validate_pandas
 
 
-class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
+class BinningTransformer(TransformerMixin, OneToOneFeatureMixin, BaseEstimator):
     """
     Discretize numerical values into bins.
 
@@ -59,10 +60,7 @@ class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
         return pd.Series(cls._indexer(X, index)[:, index])
 
     def fit(self, X, y=None):
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
-        if not isinstance(X, pd.DataFrame):
-            X = check_array(X, force_all_finite=False)
+        X = validate_pandas(self, X, reset=True, force_all_finite=False)[0]
         self.bins_ = {}
         for ind, bins in coalesce(self.bins, {}).items():
             if is_iterable(bins):
@@ -93,10 +91,7 @@ class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
 
     def transform(self, X):
         check_is_fitted(self, 'bins_')
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
-        if not isinstance(X, pd.DataFrame):
-            X = check_array(X, force_all_finite=False)
+        X = validate_pandas(self, X, reset=False, force_all_finite=False)[0]
         Xt = X.copy() if self.copy else X
         for ind, bins in self.bins_.items():
             col = self._get_col(X, ind)
@@ -108,10 +103,19 @@ class BinningTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
         return Xt
 
     def _more_tags(self):
-        return {"allow_nan": True}
+        return dict(
+            allow_nan=True,
+            preserves_dtype=[],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.allow_nan = True
+        tags.transformer_tags.preserves_dtype = []
+        return tags
 
 
-class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
+class YeoJohnsonTransformer(TransformerMixin, OneToOneFeatureMixin, BaseEstimator):
     """
     Apply the Yeo-Johnson transform,[1]_ which changes the distribution of the data to be
     more like a normal distribution.
@@ -121,9 +125,7 @@ class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
     .. [1] https://en.wikipedia.org/wiki/Power_transform
     """
     def fit_transform(self, X, y=None):
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
-        X, given_df = check_dataframe(X)
+        X, given_df = validate_pandas(self, X, reset=True, ensure_df=True)
         self.lambdas_ = np.empty(X.shape[1], dtype=np.double)
         Xt = np.empty_like(X, dtype=np.double)
         for i, feature in enumerate(X.values.T):
@@ -138,9 +140,7 @@ class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
 
     def transform(self, X):
         check_is_fitted(self, 'lambdas_')
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
-        X, given_df = check_dataframe(X)
+        X, given_df = validate_pandas(self, X, reset=False, ensure_df=True)
         Xt = self.yeo_johnson_transform(X.values, self.lambdas_)
         return pd.DataFrame(Xt, index=X.index, columns=X.columns) if given_df else Xt
 
@@ -190,11 +190,13 @@ class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
         .. [1] https://en.wikipedia.org/wiki/Power_transform
         """
         data = np.asarray(data)
-        if data.size == 0:
-            return data
+        if data.size < 2:
+            return data, 1
         if lambda_ is not None:
             return cls._yeo_johnson(lambda_, data)
-        best_lambda = optimize.brent(cls._neg_yeo_johnson_loglikelihood, brack=(0, 2), args=(data,))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            best_lambda = optimize.brent(cls._neg_yeo_johnson_loglikelihood, brack=(0, 2), args=(data,))
         if is_iterable(best_lambda):
             best_lambda = next(iter(best_lambda))
         return cls._yeo_johnson(best_lambda, data), best_lambda
@@ -237,7 +239,7 @@ class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
             if shape[ax] == 1 and lambda_.shape[ax] != 1:
                 break
         else:
-            raise ValueError("Shape mismatch for `lambda` and `data`.")
+            raise ValueError("Shape mismatch between `lambda` and `data`.")
         yj = cls._yeo_johnson(lambda_, data)
         miu = yj.mean(axis=ax).reshape(shape)
         var = ((yj - miu) ** 2).mean(axis=ax).reshape(shape)
@@ -252,7 +254,7 @@ class YeoJohnsonTransformer(BaseEstimator, OneToOneFeatureMixin):
 yeo_johnson_transform = YeoJohnsonTransformer.yeo_johnson_transform
 
 
-class TailChopper(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
+class TailChopper(TransformerMixin, OneToOneFeatureMixin, BaseEstimator):
     """
     Replace outlier values, i.e. values that are too far from the mean, with
     boundary values.
@@ -269,9 +271,7 @@ class TailChopper(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
     def fit(self, X, y=None):
         if self.sigma < 0:
             raise ValueError(f"`sigma` must be non-negative; got {self.sigma:g}.")
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
-        X, _ = check_dataframe(X)
+        X = validate_pandas(self, X, reset=True, ensure_df=True, force_all_finite=False)[0]
         mean = X.mean()
         std = X.std()
         self.bounds_ = pd.DataFrame({
@@ -282,11 +282,14 @@ class TailChopper(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
 
     def transform(self, X):
         check_is_fitted(self, 'bounds_')
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
-        X, given_df = check_dataframe(X)
+        X, given_df = validate_pandas(self, X, reset=False, ensure_df=True, force_all_finite=False)
         Xt = X.clip(lower=self.bounds_.lower, upper=self.bounds_.upper, axis=1)
         return Xt if given_df else Xt.values
 
     def _more_tags(self):
-        return {"allow_nan": True}
+        return dict(allow_nan=True)
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.allow_nan = True
+        return tags

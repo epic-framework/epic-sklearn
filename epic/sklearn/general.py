@@ -1,22 +1,35 @@
+import warnings
 import numpy as np
 import pandas as pd
 
+from copy import deepcopy
+from typing import TypeVar
 from numpy.typing import NDArray
-from typing import TypeVar, Protocol
 from collections.abc import Collection
 from abc import ABCMeta, abstractmethod
 
+try:
+    from sklearn.utils import get_tags
+except ImportError:
+    get_tags = None
+    from sklearn.utils._tags import _safe_tags
 from sklearn.utils import check_random_state
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, MetaEstimatorMixin as _MetaEstimatorMixin, clone
 
+from .typing import Classifier
 from .utils import check_array_permissive
 
-T = TypeVar('T')
 BC = TypeVar('BC', bound='BaseClassifier')
 RC = TypeVar('RC', bound='RandomClassifier')
 
 
-class BaseClassifier(BaseEstimator, ClassifierMixin, metaclass=ABCMeta):
+class FitPredictMixin:
+    """Mixin class to add a naive implementation of `fit_predict`."""
+    def fit_predict(self: Classifier, X, y=None, **fit_params):
+        return self.fit(X, y, **fit_params).predict(X)
+
+
+class BaseClassifier(ClassifierMixin, FitPredictMixin, BaseEstimator, metaclass=ABCMeta):
     """
     An alternative to using `BaseEstimator` for classifiers.
 
@@ -39,9 +52,6 @@ class BaseClassifier(BaseEstimator, ClassifierMixin, metaclass=ABCMeta):
         if isinstance(X, pd.DataFrame):
             return pd.Series(pred, index=X.index)
         return pred
-
-    def fit_predict(self, X, y=None) -> NDArray | pd.Series:
-        return self.fit(X, y).predict(X)
 
     @abstractmethod
     def _predict_proba(self, X) -> NDArray:
@@ -70,8 +80,17 @@ class ConstantClassifier(BaseClassifier):
     ----------
     constant : object, default 0
         Constant to predict.
+
+    .. deprecated:: 1.1.2
+        Use `sklearn.dummy.DummyClassifier` instead.
     """
     def __init__(self, constant=0):
+        warnings.warn(
+            "`ConstantClassifier` is deprecated and will be removed in a future version. "
+            "Use `sklearn.dummy.DummyClassifier` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.constant = constant
 
     def _predict_proba(self, X):
@@ -96,8 +115,17 @@ class RandomClassifier(BaseClassifier):
 
     random_state : int or RandomState, optional
         The seed of the pseudo random number generator.
+
+    .. deprecated:: 1.1.2
+        Use `sklearn.dummy.DummyClassifier` instead.
     """
     def __init__(self, classes: Collection = (0, 1), random_state: int | np.random.RandomState | None = None):
+        warnings.warn(
+            "`RandomClassifier` is deprecated and will be removed in a future version. "
+            "Use `sklearn.dummy.DummyClassifier` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.classes = classes
         self.random_state = random_state
 
@@ -117,29 +145,80 @@ class RandomClassifier(BaseClassifier):
         return {"non_deterministic": True}
 
 
-class Estimator(Protocol):
+class AlwaysPandasEstimatorMixin:
     """
-    A protocol for an Estimator.
-    For this purpose, whatever defines a `fit` method is considered an estimator.
+    A mixin for estimators which return pandas objects even when the input
+    is a non-pandas object. On older versions of scikir-learn, some tests
+    are expected to fail in those cases.
     """
-    def fit(self: T, X, y=None, **fit_params) -> T: ...
+
+    def _xfail_checks(self, old_version=False) -> dict[str, str]:
+        xfail_checks = dict()
+        if old_version:
+            xfail_checks |= dict(
+                check_methods_sample_order_invariance=(
+                    "This test uses numeric indexing, not compatible with pandas objects."
+                ),
+                check_fit_idempotent=(
+                    "This test tries to access `.dtype`, not expecting a pandas object."
+                ),
+            )
+        return xfail_checks
+
+    def _more_tags(self):
+        return dict(
+            _xfail_checks=self._xfail_checks(old_version=True),
+        )
+
+    def __sklearn_tags__(self):
+        # Must be defined, since we define `_more_tags`
+        return super().__sklearn_tags__()
 
 
-class Classifier(Estimator):
-    """A protocol for a Classifier."""
-    classes_: NDArray
+class MetaEstimatorMixin(_MetaEstimatorMixin):
+    """
+    Mixin class for meta estimators.
+    """
+    @property
+    def _estimator(self):
+        for x in ('estimator', 'classifier'):
+            if hasattr(self, x):
+                return getattr(self, x)
+        raise AttributeError("Cannot find underlying estimator")
+    
+    def _clone_estimator(self):
+        return clone(self._estimator)
 
-    def predict_proba(self, X): ...
-    def predict(self, X): ...
+    def _more_tags(self):
+        tags = _safe_tags(self._estimator)
+        if hasattr(self, '_xfail_checks'):
+            xfail_checks = self._xfail_checks(old_version=True)
+            if isinstance((xfc := tags.get('_xfail_checks')), dict):
+                xfc.update(xfail_checks)
+            else:
+                tags['_xfail_checks'] = xfail_checks
+        return tags
 
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        estimator_tags = get_tags(self._estimator)
+        tags.estimator_type = estimator_tags.estimator_type
+        for t in ('input', 'target', 'classifier', 'regressor', 'transformer'):
+            tt = f"{t}_tags"
+            setattr(tags, tt, deepcopy(getattr(estimator_tags, tt)))
+        return tags
 
-class LinearClassifier(Classifier):
-    """A protocol for a Linear Classifier."""
-    coef_: NDArray
-    intercept_: NDArray
-
-
-class FitPredictMixin:
-    """Mixin class to add a naive implementation of `fit_predict`."""
-    def fit_predict(self: Classifier, X, y=None, **fit_params):
-        return self.fit(X, y, **fit_params).predict(X)
+    def _validation_kwargs(self):
+        kwargs = dict()
+        try:
+            tags = self.__sklearn_tags__()
+        except Exception:
+            try:
+                tags = _safe_tags(self)
+            except Exception:
+                pass
+            else:
+                kwargs['accept_sparse'] = tags.get('sparse', False)
+        else:
+            kwargs['accept_sparse'] = tags.input_tags.sparse
+        return kwargs

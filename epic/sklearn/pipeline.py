@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable
 from sklearn.base import TransformerMixin
 from sklearn.utils.metaestimators import _BaseComposition
 
-from .general import Estimator
+from .typing import Estimator
 
 
 class SampleSplitter(_BaseComposition, TransformerMixin):

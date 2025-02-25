@@ -3,7 +3,7 @@ from sklearn.ensemble import RandomForestRegressor as _RandomForestRegressor
 from .general import FitPredictMixin
 
 
-class RandomForestRegressor(_RandomForestRegressor, FitPredictMixin):
+class RandomForestRegressor(FitPredictMixin, _RandomForestRegressor):
     """
     A RandomForestRegressor which also includes a `fit_predict` method.
 

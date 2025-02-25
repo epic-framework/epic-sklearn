@@ -37,7 +37,7 @@ designed for working only with pandas objects.
   - **label:** Utilities for encoding labels.
 - **utils:** 
   - **data:** Generate random batches from data.
-  - **general:** Functions for input validation and normalization.
+  - **validation:** Functions for input validation and normalization.
   - **kneedle:** Implementation of the "Kneedle in a Haystack" algorithm.
   - **thresholding:** A helper for setting and applying a threshold based on classification metrics.
 

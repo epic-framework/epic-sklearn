@@ -16,6 +16,7 @@ from .label import (
 from .categorical import (
     FrequencyTransformer,
     FrequencyListTransformer,
+    ListStatisticsTransformer,
     CategoryEncoder,
     ManyHotEncoder,
 )

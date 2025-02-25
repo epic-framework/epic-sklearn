@@ -4,9 +4,9 @@ import pandas as pd
 from cytoolz import compose
 from numbers import Integral
 
-from sklearn.base import BaseEstimator
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.utils.validation import check_is_fitted
+from sklearn.base import BaseEstimator, TransformerMixin
 
 from epic.pandas.numpy import isnan
 from epic.common.general import to_list
@@ -54,7 +54,7 @@ class LabelBinarizerWithMissingValues(LabelBinarizer):
         return val
 
 
-class MultiLabelEncoder(BaseEstimator):
+class MultiLabelEncoder(TransformerMixin, BaseEstimator, auto_wrap_output_keys=None):
     """
     A label encoder which allows for multiple labels for each sample.
 
@@ -73,12 +73,12 @@ class MultiLabelEncoder(BaseEstimator):
     def _to_list(self, func):
         return compose(func, to_list) if self.allow_singles else func
 
-    def _unique(self, y):
+    def _unique(self, y: pd.Series) -> set:
         classes = set()
         y.map(self._to_list(classes.update), na_action='ignore')
         return classes
 
-    def _classmap(self, y):
+    def _classmap(self, y: pd.Series):
         return {x: i for i, x in enumerate(sorted(self._unique(y)))}
 
     def fit(self, y):
@@ -97,7 +97,7 @@ class MultiLabelEncoder(BaseEstimator):
         elif diff := self._unique(y).difference(self.classes_):
             raise ValueError(f"`y` contains new labels: {list(diff)}.")
         yt = y.map(self._to_list(lambda v: [self.classes_[x] for x in v]), na_action='ignore')
-        return yt.values if to_numpy else yt
+        return yt.to_numpy() if to_numpy else yt
 
     def transform(self, y):
         check_is_fitted(self, 'classes_')
@@ -116,4 +116,18 @@ class MultiLabelEncoder(BaseEstimator):
             raise ValueError("`y` contains new labels.")
         inv = sorted(self.classes_)
         yt = y.map(lambda v: [inv[x] for x in v], na_action='ignore')
-        return yt.values if to_numpy else yt
+        return yt.to_numpy() if to_numpy else yt
+
+    def _more_tags(self):
+        return dict(
+            array_api_support=True,
+            X_types=["1dlabels", "2dlabels"],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.array_api_support = True
+        tags.input_tags.two_d_array = False
+        tags.target_tags.one_d_labels = True
+        tags.target_tags.two_d_labels = True
+        return tags

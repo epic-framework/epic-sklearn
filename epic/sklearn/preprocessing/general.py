@@ -10,6 +10,7 @@ from collections.abc import Hashable, Iterable, Callable, Mapping
 
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.metaestimators import available_if
 from sklearn.base import BaseEstimator, TransformerMixin, OneToOneFeatureMixin
 
 from ultima import Workforce
@@ -20,11 +21,12 @@ from epic.pandas.utils import pddump
 from epic.pandas.sparse import SparseDataFrame
 from epic.pandas.create import df_from_iterable, KT, DT, VT
 
-from ..general import Estimator
-from ..utils import check_dataframe
+from ..typing import Estimator
+from ..utils import validate_pandas
+from ..general import AlwaysPandasEstimatorMixin, MetaEstimatorMixin
 
 
-class SimpleTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
+class SimpleTransformer(TransformerMixin, OneToOneFeatureMixin, BaseEstimator):
     """
     A base class for simple transformers.
 
@@ -37,21 +39,63 @@ class SimpleTransformer(BaseEstimator, TransformerMixin, OneToOneFeatureMixin):
 
     The SimpleTransformer itself does nothing.
     """
+
     def fit(self, X, y=None):
-        self._check_feature_names(X, reset=True)
-        self._check_n_features(X, reset=True)
+        validate_pandas(self, X, reset=True, **self._validation_kwargs())
         return self
 
     def transform(self, X):
-        self._check_feature_names(X, reset=False)
-        self._check_n_features(X, reset=False)
+        check_is_fitted(self)
+        X, _ = validate_pandas(self, X, reset=False, **self._validation_kwargs())
         return X
 
+    @staticmethod
+    def _validation_kwargs():
+        return dict(
+            force_all_finite=False,
+            accept_sparse=('csr', 'csc', 'coo', 'dok', 'bsr', 'lil', 'dia'),
+            dtype=None,
+        )
+
     def _more_tags(self):
-        return {"stateless": True, "allow_nan": True}
+        return dict(
+            allow_nan=True,
+            sparse=True,
+            no_validation=True,
+            preserves_dtype=[
+                "float64",
+                "float32",
+                "int64",
+                "int32",
+                "bool",
+            ],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.allow_nan = True
+        tags.input_tags.sparse = True
+        tags.no_validation = True
+        tags.transformer_tags.preserves_dtype = [
+            "float64",
+            "float32",
+            "int64",
+            "int32",
+            "bool",
+        ]
+        return tags
 
 
-class DataFrameWrapper(BaseEstimator, TransformerMixin):
+def _estimator_has(attr):
+    def check(self):
+        # Raise original `AttributeError` if `attr` does not exist
+        getattr(self.estimator, attr)
+        return True
+
+    return check
+
+
+class DataFrameWrapper(MetaEstimatorMixin, AlwaysPandasEstimatorMixin, BaseEstimator):
     """
     An estimator which wraps another estimator, and makes it suitable
     for DataFrame input and output.
@@ -64,7 +108,7 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
     Parameters
     ----------
     estimator : Estimator
-        Estimator to wrap.
+        The estimator to wrap.
         It can be completely unaware to the existence of pandas.
 
     keep_colnames : bool, default True
@@ -83,6 +127,7 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
         If False, a DataFrame is built from it using `DataFrame.sparse.from_spmatrix`.
         See also `epic.pandas.sparse.SparseDataFrame`.
     """
+
     def __init__(
             self,
             estimator: Estimator,
@@ -109,12 +154,12 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
         self.input_columns_ = None if X is None else X.columns.copy()
         if self.keep_colnames and self.input_columns_ is not None:
             self.features_ = np.asarray(self.input_columns_)
-        elif hasattr(self.estimator, "get_feature_names_out"):
-            self.features_ = self.estimator.get_feature_names_out()
-        elif hasattr(self.estimator, "get_feature_names"):
-            self.features_ = self.estimator.get_feature_names()
-        elif isinstance(self.estimator, Pipeline) and hasattr(self.estimator._final_estimator, "get_feature_names"):
-            self.features_ = self.estimator._final_estimator.get_feature_names()
+        elif hasattr(self.estimator_, "get_feature_names_out"):
+            self.features_ = self.estimator_.get_feature_names_out()
+        elif hasattr(self.estimator_, "get_feature_names"):
+            self.features_ = self.estimator_.get_feature_names()
+        elif isinstance(self.estimator_, Pipeline) and hasattr(self.estimator_._final_estimator, "get_feature_names"):
+            self.features_ = self.estimator_._final_estimator.get_feature_names()
         else:
             self.features_ = None
 
@@ -129,20 +174,20 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
             X = (v for k, v in X)
             Xdf = None
         else:
-            Xdf = check_dataframe(X)[0]
+            Xdf = validate_pandas(self, X, reset=True, ensure_df=True, **self._validation_kwargs())[0]
             if isinstance(y, pd.Series):
                 y = self._conform_target(y, Xdf.index)
-        self.estimator.fit(X, y, **fit_params)
+        self.estimator_ = self._clone_estimator().fit(X, y, **fit_params)
         self._set_attrs(Xdf)
         return self
 
     def _infer(self, method_name, X, kwargs):
-        check_is_fitted(self, ('features_', 'input_columns_'))
-        method = getattr(self.estimator, method_name)
+        check_is_fitted(self, ('features_', 'input_columns_', 'estimator_'))
+        method = getattr(self.estimator_, method_name)
         if self.iterable_input:
             X = self._save_index(X)
         else:
-            X = check_dataframe(X)[0]
+            X = validate_pandas(self, X, reset=False, ensure_df=True, **self._validation_kwargs())[0]
             if self.input_columns_ is not None:
                 if not set(X.columns) >= set(self.input_columns_):
                     raise ValueError("There are input columns missing in the given data.")
@@ -153,12 +198,13 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
         return self._build_result(method(X, **kwargs))
 
     def _fit_infer(self, method_name, X, y, fit_params):
-        method = getattr(self.estimator, f'fit_{method_name}')
+        self.estimator_ = self._clone_estimator()
+        method = getattr(self.estimator_, f'fit_{method_name}')
         if self.iterable_input:
             X = self._save_index(X)
             Xdf = None
         else:
-            Xdf = check_dataframe(X)[0]
+            Xdf = validate_pandas(self, X, reset=True, ensure_df=True, **self._validation_kwargs())[0]
             self._index = Xdf.index
             if isinstance(y, pd.Series):
                 y = self._conform_target(y, Xdf.index)
@@ -168,17 +214,18 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
 
     def _build_result(self, Xt):
         try:
+            if not hasattr(Xt, 'shape') or not Xt.shape:
+                # It's a number
+                return Xt
             if Xt.shape[0] != len(self._index):
                 raise ValueError(f"Expected result of length {len(self._index)}; got {Xt.shape[0]} instead.")
             if Xt.ndim > 2:
                 raise ValueError(f"Unexpected number of dimensions for result: {Xt.ndim}.")
-            if Xt.ndim == 2 and Xt.shape[1] == 1:
-                Xt = Xt.squeeze(axis=1)
             if Xt.ndim == 1:
                 if isinstance(Xt, pd.Series):
                     return Xt.reindex(index=self._index, copy=False)
                 return pd.Series(Xt, index=self._index)
-            for possible_columns in (self.features_, getattr(self.estimator, 'classes_', None)):
+            for possible_columns in (self.features_, getattr(self.estimator_, 'classes_', None)):
                 if possible_columns is not None and Xt.shape[1] == len(possible_columns):
                     columns = possible_columns
                     break
@@ -196,26 +243,37 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
         finally:
             del self._index
 
+    @available_if(_estimator_has('transform'))
     def transform(self, X, **kwargs):
         return self._infer('transform', X, kwargs)
 
+    @available_if(_estimator_has('fit_transform'))
     def fit_transform(self, X, y=None, **fit_params):
         return self._fit_infer('transform', X, y, fit_params)
 
+    @available_if(_estimator_has('predict'))
     def predict(self, X, **kwargs):
         return self._infer('predict', X, kwargs)
 
+    @available_if(_estimator_has('fit_predict'))
     def fit_predict(self, X, y=None, **fit_params):
         return self._fit_infer('predict', X, y, fit_params)
 
+    @available_if(_estimator_has('predict_proba'))
     def predict_proba(self, X, **kwargs):
         return self._infer('predict_proba', X, kwargs)
 
+    @available_if(_estimator_has('predict_log_proba'))
     def predict_log_proba(self, X, **kwargs):
         return self._infer('predict_log_proba', X, kwargs)
 
+    @available_if(_estimator_has('decision_function'))
     def decision_function(self, X, **kwargs):
         return self._infer('decision_function', X, kwargs)
+
+    @available_if(_estimator_has('score'))
+    def score(self, X, y=None, sample_weight=None):
+        return self._infer('score', X, dict(y=y, sample_weight=sample_weight))
 
     def get_feature_names(self):
         check_is_fitted(self, 'features_')
@@ -227,8 +285,9 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
         return self.get_feature_names()
 
     def _wrap_attribute(self, name):
-        if hasattr(self.estimator, name):
-            return getattr(self.estimator, name)
+        estimator = getattr(self, 'estimator_', self.estimator)
+        if hasattr(estimator, name):
+            return getattr(estimator, name)
         raise AttributeError(f"Object has no attribute '{name}'.")
 
     @property
@@ -239,11 +298,23 @@ class DataFrameWrapper(BaseEstimator, TransformerMixin):
     def classes_(self):
         return self._wrap_attribute('classes_')
 
+    def _xfail_checks(self, old_version=False) -> dict[str, str]:
+        return super()._xfail_checks(old_version) | dict(
+            check_classifiers_classes=(
+                "This estimator explicitely wraps the prediction and decision function "
+                "as pandas objects and is therefore expected to fail this test."
+            ),
+            check_decision_proba_consistency=(
+                "This estimator explicitely wraps the `predict_proba` result "
+                "as a pandas object and is therefore expected to fail this test."
+            ),
+        )
 
-class DataFrameColumnSelector(BaseEstimator, TransformerMixin):
+
+class DataFrameColumnSelector(TransformerMixin, AlwaysPandasEstimatorMixin, BaseEstimator):
     """
     A transformer that selects some columns from the input DataFrame.
-    If columns are missing, can fill them with a given value, or throw ValueError.
+    If columns are missing, can fill them with a given value, or throw a `ValueError`.
 
     Parameters
     ----------
@@ -272,7 +343,7 @@ class DataFrameColumnSelector(BaseEstimator, TransformerMixin):
         self.handle_missing = handle_missing
 
     def fit(self, X, y=None):
-        X, _ = check_dataframe(X)
+        X = validate_pandas(self, X, reset=True, ensure_df=True)[0]
         if self.columns is None:
             self.features_ = X.columns
         else:
@@ -288,7 +359,7 @@ class DataFrameColumnSelector(BaseEstimator, TransformerMixin):
                 f"Invalid value '{self.handle_missing}' given for `handle_missing`. "
                 "Use 'ignore' or 'error'."
             )
-        X, _ = check_dataframe(X)
+        X = validate_pandas(self, X, reset=False, ensure_df=True)[0]
         if self.handle_missing == "error" and (missing := set(to_list(self.features_)).difference(X)):
             raise ValueError(f"Columns {missing} are missing from dataframe.")
         if is_iterable(self.features_):
@@ -303,8 +374,18 @@ class DataFrameColumnSelector(BaseEstimator, TransformerMixin):
         check_is_fitted(self, 'features_')
         return np.asarray(to_list(self.features_))
 
+    def _more_tags(self):
+        return dict(
+            preserves_dtype=[],
+        )
 
-class FeatureGenerator(BaseEstimator, TransformerMixin, Generic[KT, DT, VT]):
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.transformer_tags.preserves_dtype = []
+        return tags
+
+
+class FeatureGenerator(TransformerMixin, AlwaysPandasEstimatorMixin, BaseEstimator, Generic[KT, DT, VT]):
     """
     Generate a DataFrame of features from an iterable of input samples.
     
@@ -398,6 +479,23 @@ class FeatureGenerator(BaseEstimator, TransformerMixin, Generic[KT, DT, VT]):
             ordered=True,
         )
 
+    def _more_tags(self):
+        return dict(
+            no_validation=True,
+            requires_fit=False,
+            preserves_dtype=[],
+            X_types=["dict"],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.no_validation = True
+        tags.requires_fit = False
+        tags.transformer_tags.preserves_dtype = []
+        tags.input_tags.two_d_array = False
+        tags.input_tags.dict = True
+        return tags
+
 
 class DataDumper(SimpleTransformer):
     """
@@ -414,6 +512,7 @@ class DataDumper(SimpleTransformer):
     --------
     epic.pandas.utils.pddump : Dumper used. Determines format by `filename` extension.
     """
+
     def __init__(self, filename: str | None = None):
         self.filename = filename
 
@@ -450,6 +549,7 @@ class PipelineLogger(SimpleTransformer):
     --------
     epic.logging.get_logger : Function used to get or create the logger.
     """
+
     def __init__(
             self,
             message: str = '',
@@ -474,7 +574,7 @@ class PipelineLogger(SimpleTransformer):
         return X
 
 
-class ParallelFunctionTransformer(BaseEstimator, TransformerMixin):
+class ParallelFunctionTransformer(TransformerMixin, BaseEstimator):
     """
     A transformer similar to `sklearn.preprocessing.FunctionTransformer`.
     It maps a function over an iterable input, but does it in parallel.
@@ -508,6 +608,7 @@ class ParallelFunctionTransformer(BaseEstimator, TransformerMixin):
     --------
     ultima.Workforce : Underlying mechanism used.
     """
+
     def __init__(
             self,
             func: Callable | None = None,

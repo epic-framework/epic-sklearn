@@ -5,18 +5,20 @@ from typing import Literal
 from joblib import Parallel, delayed
 from numpy.typing import ArrayLike, NDArray
 
-from sklearn.exceptions import NotFittedError
 from sklearn.metrics import precision_recall_curve
 from sklearn.model_selection import train_test_split
 from sklearn.utils.validation import check_is_fitted
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model._base import LinearClassifierMixin
-from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.utils.multiclass import check_classification_targets
 
+from .utils import validate_pandas
 from .metrics import confusion_score
-from .general import Classifier, LinearClassifier
+from .general import MetaEstimatorMixin
+from .typing import Classifier, LinearClassifier
 
 
-class ThresholdCompositeClassifier(BaseEstimator, ClassifierMixin):
+class ThresholdCompositeClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator):
     """
     Compute a threshold to apply to probabilities based on precision or recall on test data.
 
@@ -24,7 +26,7 @@ class ThresholdCompositeClassifier(BaseEstimator, ClassifierMixin):
     Upon training, the data is split into a training set and a testing set. The classifier is
     fitted on the training set, and the precision and recall curves are calculated on the
     testing set. A threshold is then determined based on the desired value of one of those statistics.
-    Upon prediction, the threshold is applied to the predicted probabilities to determine the
+    Upon prediction, the threshold will be applied to the predicted probabilities to determine the
     predicted class.
 
     Parameters
@@ -40,11 +42,16 @@ class ThresholdCompositeClassifier(BaseEstimator, ClassifierMixin):
 
     pos_label : int or str, default 1
         The label of the positive class, to which `statistic` refers.
+        If `pos_lavel` is an int and `classifier` has no class with this value after fitting,
+        then it is the index of the positive class, out of `classifier.classes_`.
 
     test_size : float or int, default 0.1
         Size of the test data set, taken out of the data given to `fit`.
         - float: Proportion of the data, between 0.0 and 1.0.
         - int: Absolute number of samples.
+
+    random_state : int or RandomState, optional
+        The seed of the pseudo random number generator used for splitting the training data.
 
     Attributes
     ----------
@@ -64,69 +71,106 @@ class ThresholdCompositeClassifier(BaseEstimator, ClassifierMixin):
             statistic: Literal['precision', 'recall'] = 'precision',
             pos_label: int | str = 1,
             test_size: float | int = 0.1,
+            random_state: int | np.random.RandomState | None = None
     ):
         self.classifier = classifier
         self.value = value
         self.statistic = statistic
         self.pos_label = pos_label
         self.test_size = test_size
+        self.random_state = random_state
 
     def fit(self, X, y, **fit_params):
         if self.statistic not in self.STATS:
             raise ValueError(f"Unknown statistic `{self.statistic}`. Possible values: {', '.join(self.STATS)}.")
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=self.test_size, stratify=y)
-
-        self.classifier.fit(X_train, y_train, **fit_params)
-        self.probmask_ = self.classifier.classes_ == self.pos_label
-        self.srt_ = np.argsort(self.probmask_)
-
-        # these values can be used for post-adjustment of threshold
-        self.X_test_probs_ = self._probs(X_test)
-        self.y_test_values_ = y_test.values
-
-        self._update_threshold()
-        return self
-
-    def set_params(self, **params):
-        super().set_params(**params)
-        if 'value' in params:
+        X, y, _ = validate_pandas(self, X, y, reset=True, **self._validation_kwargs())
+        # We might not have enough data for stratification
+        for stratify in (y, None):
             try:
-                check_is_fitted(self, ['X_test_probs_', 'y_test_values_'])
-            except NotFittedError:
-                pass
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y,
+                    test_size=self.test_size,
+                    stratify=stratify,
+                    random_state=self.random_state,
+                )
+            except ValueError:
+                if stratify is None:
+                    raise
             else:
-                self._update_threshold()
+                break
+        self.classifier_ = self._clone_estimator().fit(X_train, y_train, **fit_params)
+        if self.pos_label in self.classifier_.classes_:
+            self.pos_label_ = self.pos_label
+        elif isinstance(self.pos_label, int):
+            self.pos_label_ = self.classifier_.classes_[self.pos_label]
+        else:
+            raise ValueError(f"Illegal value for `pos_label`: {self.pos_label!r}.")
+        self.probmask_ = self.classifier_.classes_ == self.pos_label_
+        self.srt_ = np.argsort(self.probmask_)
+        # These values can be used for post-adjustment of threshold
+        self.X_test_probs_ = self._probs(X_test)
+        self.y_test_values_ = y_test.to_numpy(copy=True) if isinstance(y_test, pd.Series) else y_test.copy()
+        self.update_threshold()
         return self
 
-    def _update_threshold(self):
-        prt = precision_recall_curve(self.y_test_values_, self.X_test_probs_, pos_label=self.pos_label)
+    def update_threshold(self) -> float:
+        check_is_fitted(self, ['X_test_probs_', 'y_test_values_'])
+        prt = precision_recall_curve(self.y_test_values_, self.X_test_probs_, pos_label=self.pos_label_)
         ind, reduce_func, unattainable = self.STATS[self.statistic]
         stat = prt[ind][:-1]
         thresholds = prt[-1]
         valid = np.append(thresholds[stat >= self.value], unattainable)
         self.threshold_ = reduce_func(valid)
+        return self.threshold_
 
     def predict(self, X):
-        check_is_fitted(self, ['probmask_', 'srt_', 'threshold_'])
-        return self.classifier.classes_[self.srt_][(self._probs(X) >= self.threshold_).astype(int)]
+        check_is_fitted(self, ['classifier_', 'probmask_', 'srt_', 'threshold_'])
+        return self.classifier_.classes_[self.srt_][(self._probs(X) >= self.threshold_).astype(int)].squeeze(axis=1)
 
     @property
     def classes_(self):
-        return self.classifier.classes_
+        check_is_fitted(self, 'classifier_')
+        return self.classifier_.classes_
 
     def predict_proba(self, X):
-        return self.classifier.predict_proba(X)
+        check_is_fitted(self, 'classifier_')
+        X = validate_pandas(self, X, reset=False, **self._validation_kwargs())[0]
+        return self.classifier_.predict_proba(X)
 
     def predict_log_proba(self, X):
-        if hasattr(self.classifier, 'predict_log_proba'):
-            return self.classifier.predict_log_proba(X)
+        check_is_fitted(self, 'classifier_')
+        if hasattr(self.classifier_, 'predict_log_proba'):
+            return self.classifier_.predict_log_proba(X)
         return np.log(self.predict_proba(X))
 
     def _probs(self, X):
         return self.predict_proba(X)[:, self.probmask_]
 
+    def _more_tags(self):
+        return dict(
+            poor_score=True,
+        )
 
-class WeightedLinearOVRClassifier(BaseEstimator, LinearClassifierMixin, ClassifierMixin):
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.classifier_tags.poor_score = True
+        return tags
+
+    def _xfail_checks(self, old_version=False) -> dict[str, str]:
+        checks = dict(
+            check_classifiers_train=(
+                "This classifier is designed to predict different predictions than the standard ones "
+                "given prediction probabilities and is therefore expected to fail this test."
+            ),
+        )
+        if old_version:
+            checks["check_classifiers_classes"] = (
+                "The old version of this test is buggy and fails for this classifier unnecessarily."
+            )
+        return checks
+
+
+class WeightedLinearOVRClassifier(MetaEstimatorMixin, LinearClassifierMixin, ClassifierMixin, BaseEstimator):
     """
     A classifier which wraps a linear classifier and performs a weighted OVR strategy between the classes.
     
@@ -212,13 +256,14 @@ class WeightedLinearOVRClassifier(BaseEstimator, LinearClassifierMixin, Classifi
         return probs / probs.sum()
 
     def fit(self, X, y):
-        X, y = self._validate_data(X, y, accept_sparse='csr', dtype=np.float64, order="C")
+        X, y, _ = validate_pandas(self, X, y, reset=True, accept_sparse='csr', dtype=np.float64, order="C")
+        check_classification_targets(y)
         self.classes_ = np.unique(y)
         price = self._check_price()
         probs = self._check_classprobs()
         fit_single = delayed(_fit_single_linear_ovr)
         fitted = Parallel(self.n_jobs)(
-            fit_single(clone(self.classifier), X, y, price[c] * probs) for c in self.classes_
+            fit_single(self._clone_estimator(), X, y, price[c] * probs) for c in self.classes_
         )
         self.coef_ = np.empty((len(self.classes_), X.shape[1]), dtype=np.float64)
         self.intercept_ = np.empty(len(self.classes_), dtype=np.float64)
@@ -231,8 +276,23 @@ class WeightedLinearOVRClassifier(BaseEstimator, LinearClassifierMixin, Classifi
             self.intercept_[i] = clf.intercept_[0] * scale
         return self
 
+    def decision_function(self, X):
+        scores = super().decision_function(X)
+        # Binary classification should return a 1D array
+        return scores[:, 1] if scores.shape[1] == 2 else scores
+
+    def _more_tags(self):
+        return dict(
+            X_types=["sparse"],
+        )
+
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.sparse = True
+        return tags
+
 
 def _fit_single_linear_ovr(clf: LinearClassifier, X: NDArray, y: NDArray, classweights: pd.Series) -> LinearClassifier:
-    yy = np.where(np.in1d(y, classweights.index[classweights > 0]), 1, -1)
+    yy = np.where(np.isin(y, classweights.index[classweights > 0]), 1, -1).flatten()
     w = classweights.abs()[y].values
     return clf.fit(X, yy, sample_weight=w)
